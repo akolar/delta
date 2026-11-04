@@ -17,7 +17,7 @@ package io.delta.kernel.internal.skipping
 
 import scala.collection.JavaConverters.setAsJavaSetConverter
 
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType, VoidType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -163,6 +163,34 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
               .add("a", LongType.LONG, true)
               .add("b", LongType.LONG, true)
               .add("c", LongType.LONG, true),
+            true)
+          .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)),
+      // Void columns only have a null count
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("v", VoidType.VOID)
+          .add("s", new StructType().add("v", VoidType.VOID)),
+        new StructType()
+          .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
+          .add(
+            StatsSchemaHelper.MIN,
+            new StructType()
+              .add("a", IntegerType.INTEGER, true)
+              .add("s", new StructType(), true),
+            true)
+          .add(
+            StatsSchemaHelper.MAX,
+            new StructType()
+              .add("a", IntegerType.INTEGER, true)
+              .add("s", new StructType(), true),
+            true)
+          .add(
+            StatsSchemaHelper.NULL_COUNT,
+            new StructType()
+              .add("a", LongType.LONG, true)
+              .add("v", LongType.LONG, true)
+              .add("s", new StructType().add("v", LongType.LONG, true), true),
             true)
           .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)),
       (

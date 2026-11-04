@@ -318,6 +318,33 @@ class ParquetFileReaderSuite extends AnyFunSuite
       readParquetFilesUsingSpark(tablePath, readSchema) /* expected */ )
   }
 
+  test("read void columns as nulls, including where the file has a column with that name") {
+    val tablePath = goldenTableFile("parquet-all-types").getAbsolutePath
+    val readSchema = new StructType()
+      .add("booleanType", BooleanType.BOOLEAN)
+      .add("integerType", VoidType.VOID) // an integer column in the file
+      .add("missing_void", VoidType.VOID)
+      .add(
+        "nested_struct",
+        new StructType()
+          .add("aa", VoidType.VOID) // a string column in the file
+          .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
+    val readSchemaWithoutVoid = new StructType()
+      .add("booleanType", BooleanType.BOOLEAN)
+      .add(
+        "nested_struct",
+        new StructType().add("ac", new StructType().add("aca", IntegerType.INTEGER)))
+
+    val expected = readParquetFilesUsingSpark(tablePath, readSchemaWithoutVoid).map { row =>
+      val nestedStruct = row.get(1) match {
+        case nested: TestRow => TestRow(null, nested.get(0))
+        case null => null
+      }
+      TestRow(row.get(0), null, null, nestedStruct)
+    }
+    checkAnswer(readParquetFilesUsingKernel(tablePath, readSchema), expected)
+  }
+
   test("read columns with int96 timestamp_ntz") {
     // Spark doesn't support writing timestamp_NTZ as INT96 (although reads are)
     // So we're reusing a pre-written file directly.

@@ -74,6 +74,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     ("\"decimal\"", DecimalType.USER_DEFAULT),
     ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
     ("\"variant\"", VariantType.VARIANT),
+    ("\"void\"", VoidType.VOID),
     ("\"geometry\"", GeometryType.ofDefault()),
     ("\"geometry(EPSG:0)\"", GeometryType.ofCRS("EPSG:0")),
     ("\"geography\"", GeographyType.ofDefault()),
@@ -88,6 +89,10 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
   test("parseDataType: invalid primitive string data type") {
     checkError[IllegalArgumentException]("\"foo\"", "foo is not a supported delta data type")
+  }
+
+  test("parseDataType: type names are case-sensitive, including void") {
+    checkError[IllegalArgumentException]("\"VOID\"", "VOID is not a supported delta data type")
   }
 
   test("parseDataType: mis-formatted decimal  data type") {
@@ -659,6 +664,7 @@ object DataTypeJsonSerDeSuite {
     ("\"string\"", StringType.STRING),
     ("\"integer\"", IntegerType.INTEGER),
     ("\"variant\"", VariantType.VARIANT),
+    ("\"void\"", VoidType.VOID),
     (arrayTypeJson("\"string\"", true), new ArrayType(StringType.STRING, true)),
     (
       mapTypeJson("\"integer\"", "\"string\"", true),

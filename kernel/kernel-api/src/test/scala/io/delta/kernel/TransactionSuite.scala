@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FieldMetadata, FloatType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VariantType}
+import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, FloatType, IntegerType, LongType, MapType, StringType, StructField, StructType, TimestampType, VariantType, VoidType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -384,6 +384,82 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     }
     assert(ex.getMessage.contains(
       "Transforming logical data with variant data is currently unsupported"))
+  }
+
+  Seq(
+    "top-level" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("v", VoidType.VOID),
+    "nested" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("s", new StructType().add("i", IntegerType.INTEGER).add("v", VoidType.VOID)))
+    .foreach { case (position, schema) =>
+      test(s"transformLogicalData: Writing to tables with $position void is blocked") {
+        val ex = intercept[KernelException] {
+          transformLogicalData(
+            mockEngine(),
+            testTxnState(schema),
+            testData(includePartitionCols = false),
+            Map.empty[String, Literal].asJava /* partition values */ )
+            .forEachRemaining(_ => ()) // consume the iterator
+        }
+        assert(ex.getMessage === "Cannot transform logical data for a table with void fields, " +
+          "because Kernel's Parquet writer can't write void fields. Write the data files with " +
+          "a Parquet writer that omits them instead.")
+      }
+    }
+
+  Seq(
+    "only void columns" -> new StructType().add("v", VoidType.VOID),
+    "a void inside an array or a map at 'a.element'" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("a", new ArrayType(VoidType.VOID, true)),
+    "a void inside an array or a map at 'm.key'" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("m", new MapType(VoidType.VOID, IntegerType.INTEGER, true)),
+    "a void inside an array or a map at 'm.value'" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("m", new MapType(IntegerType.INTEGER, VoidType.VOID, true)),
+    "a void inside an array or a map at 'a.element.v'" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add(
+        "a",
+        new ArrayType(
+          new StructType().add("i", IntegerType.INTEGER).add("v", VoidType.VOID),
+          true)),
+    "a struct whose fields are all void at 's.inner'" -> new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add(
+        "s",
+        new StructType()
+          .add("i", IntegerType.INTEGER)
+          .add("inner", new StructType().add("v", VoidType.VOID))))
+    .foreach { case (schemaShape, schema) =>
+      test(s"getWriteContext: blocked when the schema has $schemaShape") {
+        val ex = intercept[KernelException] {
+          getWriteContext(mockEngine(), testTxnState(schema), Map.empty[String, Literal].asJava)
+        }
+        assert(ex.getMessage === s"Cannot write data files to a table whose schema has " +
+          s"$schemaShape, because void values aren't stored in data files. Change the void " +
+          "fields to other types first.")
+      }
+    }
+
+  test("getWriteContext: allowed with void columns outside arrays and maps") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("v", VoidType.VOID)
+      .add("s", new StructType().add("i", IntegerType.INTEGER).add("v", VoidType.VOID))
+
+    getWriteContext(mockEngine(), testTxnState(schema), Map.empty[String, Literal].asJava)
+  }
+
+  test("getWriteContext: an empty struct doesn't count as all void") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("empty", new StructType())
+
+    getWriteContext(mockEngine(), testTxnState(schema), Map.empty[String, Literal].asJava)
   }
 }
 

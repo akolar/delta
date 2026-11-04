@@ -20,7 +20,6 @@ import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
@@ -77,23 +76,23 @@ class MetadataSuite extends AnyFunSuite with TestUtils {
     Metadata.fromRow(new GenericRow(Metadata.FULL_SCHEMA, values))
   }
 
-  test("schema parsing is lazy - void type does not block non-schema access") {
-    val voidSchemaJson = """{"type":"struct","fields":[""" +
+  test("schema parsing is lazy - an unsupported type does not block non-schema access") {
+    val intervalSchemaJson = """{"type":"struct","fields":[""" +
       """{"name":"x","type":"integer","nullable":true,"metadata":{}},""" +
-      """{"name":"y","type":"void","nullable":true,"metadata":{}}]}"""
+      """{"name":"y","type":"interval","nullable":true,"metadata":{}}]}"""
 
-    val metadata = testMetadata(schemaString = voidSchemaJson)
+    val metadata = testMetadata(schemaString = intervalSchemaJson)
 
     // Non-schema methods should work without triggering schema parsing
     assert(metadata.getId === "id")
     assert(metadata.getConfiguration.isEmpty)
-    assert(metadata.getSchemaString === voidSchemaJson)
+    assert(metadata.getSchemaString === intervalSchemaJson)
 
-    // Accessing the schema should throw KernelException due to VOID type
-    val e = intercept[KernelException] {
+    // Accessing the schema should throw due to the unsupported type
+    val e = intercept[IllegalArgumentException] {
       metadata.getSchema
     }
-    assert(e.getMessage.contains("VOID"))
+    assert(e.getMessage.contains("interval is not a supported delta data type"))
   }
 
   test("Metadata serialization round trip") {

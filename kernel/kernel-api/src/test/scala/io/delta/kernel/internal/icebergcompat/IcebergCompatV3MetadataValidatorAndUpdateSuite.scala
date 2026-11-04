@@ -37,11 +37,12 @@ trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
   override def icebergCompatVersion: String = "V3"
 
   override def supportedDataColumnTypes: Set[DataType] =
-    ALL_TYPES + VariantType.VARIANT + GeometryType.ofDefault() + GeographyType.ofDefault()
+    ALL_TYPES + VariantType.VARIANT + GeometryType.ofDefault() + GeographyType.ofDefault() +
+      VoidType.VOID
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set.empty
 
-  override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
+  override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES + VoidType.VOID
 
   override def isDeletionVectorsSupported: Boolean = true
 
@@ -177,6 +178,84 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       }
       assert(ex.getMessage.contains("icebergCompatV3 requires the default value to be literal " +
         "with correct data types for a column. 'integer: CURRENT_TIMESTAMP()' is invalid."))
+    }
+  }
+
+  Seq(
+    "col" -> new StructType().add("col", VoidType.VOID, false),
+    "s.v" -> new StructType().add("s", new StructType().add("v", VoidType.VOID, false)),
+    "a.element" -> new StructType().add("a", new ArrayType(VoidType.VOID, false)),
+    "m.value" -> new StructType()
+      .add("m", new MapType(IntegerType.INTEGER, VoidType.VOID, false)))
+    .foreach { case (fieldPath, schema) =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"icebergCompatV3 rejects void at $fieldPath, which can't be null, " +
+          s"isNewTable = $isNewTable") {
+          val ex = intercept[KernelException] {
+            validateAndUpdateIcebergCompatMetadata(
+              isNewTable,
+              getCompatEnabledMetadata(schema),
+              getCompatEnabledProtocol())
+          }
+          assert(ex.getMessage.contains(
+            s"icebergCompatV3 requires void fields to be nullable, but '$fieldPath' can't be " +
+              "null. Make it nullable, or change it to another type."))
+        }
+      }
+    }
+
+  Seq(
+    "non-nullable" -> new MapType(VoidType.VOID, IntegerType.INTEGER, true),
+    "nullable" -> new MapType(
+      new StructField(MapType.MAP_KEY_NAME, VoidType.VOID, true),
+      new StructField(MapType.MAP_VALUE_NAME, IntegerType.INTEGER, true)))
+    .foreach { case (keyNullability, mapType) =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"icebergCompatV3 rejects a $keyNullability void map key, isNewTable = $isNewTable") {
+          val ex = intercept[KernelException] {
+            validateAndUpdateIcebergCompatMetadata(
+              isNewTable,
+              getCompatEnabledMetadata(new StructType().add("m", mapType)),
+              getCompatEnabledProtocol())
+          }
+          assert(ex.getMessage.contains("icebergCompatV3 doesn't support void map keys, " +
+            "because map keys can't be null. Change 'm.key' to another type."))
+        }
+      }
+    }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"icebergCompatV3 allows nullable void inside fields that can't be null, " +
+      s"isNewTable = $isNewTable") {
+      val structWithVoid = new StructType().add("v", VoidType.VOID, true)
+      val schema = new StructType()
+        .add("s", structWithVoid, false)
+        .add("a", new ArrayType(structWithVoid, false), false)
+        .add("m", new MapType(IntegerType.INTEGER, structWithVoid, false), false)
+
+      validateAndUpdateIcebergCompatMetadata(
+        isNewTable,
+        getCompatEnabledMetadata(schema),
+        getCompatEnabledProtocol())
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"icebergCompatV3 rejects a default value on a void column, isNewTable = $isNewTable") {
+      val schema = new StructType().add(
+        "col",
+        VoidType.VOID,
+        new FieldMetadata.Builder().putString("CURRENT_DEFAULT", "NULL").build())
+
+      val ex = intercept[KernelException] {
+        validateAndUpdateIcebergCompatMetadata(
+          isNewTable,
+          getCompatEnabledMetadata(schema),
+          getCompatEnabledProtocol(ALLOW_COLUMN_DEFAULTS_W_FEATURE))
+      }
+      assert(ex.getMessage.contains(
+        "icebergCompatV3 doesn't support default values on void fields, but 'col' has one. " +
+          "Remove the default value, or change the field to another type."))
     }
   }
 }

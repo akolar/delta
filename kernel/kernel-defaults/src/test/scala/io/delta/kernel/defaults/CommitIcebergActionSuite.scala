@@ -33,6 +33,7 @@ import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
+import io.delta.kernel.types.{ArrayType, IntegerType, StructType, VoidType}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.DataFileStatus
 
@@ -698,6 +699,112 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
         removeFile.getDefaultRowCommitVersion.isPresent,
         "defaultRowCommitVersion should be present when caller provides it")
       assert(removeFile.getDefaultRowCommitVersion.get == expectedDefaultRowCommitVersion)
+    }
+  }
+
+  /* ----- Void columns ----- */
+
+  private val schemaWithVoidArray = testSchema.add("a", new ArrayType(VoidType.VOID, true))
+
+  test("V3: commit rejects a new data file while the schema has a void inside an array") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        schemaWithVoidArray,
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled)
+
+      val ex = intercept[KernelException] {
+        commitSingleAction(
+          engine,
+          tablePath,
+          createIcebergCompatAction(
+            "ADD",
+            "V3",
+            _,
+            engine,
+            generateDataFileStatus(tablePath, "file1.parquet"),
+            dataChange = true))
+      }
+      assert(ex.getMessage.contains("Cannot write data files to a table whose schema has a void " +
+        "inside an array or a map at 'a.element'"))
+    }
+  }
+
+  test("V3: commit accepts a new data file when the same transaction changes the void array " +
+    "to another type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        schemaWithVoidArray,
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled)
+
+      val currentSchema = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getSchema
+      val schemaWithIntArray = new StructType(currentSchema.fields().asScala.map { field =>
+        if (field.getName == "a") field.withDataType(new ArrayType(IntegerType.INTEGER, true))
+        else field
+      }.asJava)
+      val txn = getUpdateTxn(engine, tablePath, schema = schemaWithIntArray, maxRetries = 0)
+      val add = createIcebergCompatAction(
+        "ADD",
+        "V3",
+        txn,
+        engine,
+        generateDataFileStatus(tablePath, "file1.parquet"),
+        dataChange = true)
+      commitTransaction(
+        txn,
+        engine,
+        inMemoryIterable(toCloseableIterator(Seq(add).asJava.iterator())))
+    }
+  }
+
+  test("V3: commit doesn't check adds with a deletion vector, even while the schema has a void " +
+    "inside an array") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        schemaWithVoidArray,
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled ++
+          Map(TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey -> "true"))
+
+      // A deletion vector usually means an existing file is being re-added, so the commit lets
+      // it through. Kernel can't tell that from a new file, so this one gets through as well.
+      commitSingleAction(
+        engine,
+        tablePath,
+        createIcebergCompatAction(
+          "ADD",
+          "V3",
+          _,
+          engine,
+          generateDataFileStatus(tablePath, "file1.parquet"),
+          dataChange = true,
+          deletionVector = Optional.of(
+            new DeletionVectorDescriptor("u", "ab^-aqEH.-t@S}K{vb[*k^", Optional.empty(), 34, 1))))
+    }
+  }
+
+  test("V3: commit accepts a new data file with a top-level void column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema.add("v", VoidType.VOID),
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled)
+
+      commitSingleAction(
+        engine,
+        tablePath,
+        createIcebergCompatAction(
+          "ADD",
+          "V3",
+          _,
+          engine,
+          generateDataFileStatus(tablePath, "file1.parquet"),
+          dataChange = true))
     }
   }
 }

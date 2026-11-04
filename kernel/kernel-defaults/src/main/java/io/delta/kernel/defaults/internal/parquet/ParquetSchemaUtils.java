@@ -94,10 +94,15 @@ class ParquetSchemaUtils {
    *
    * @param groupType Parquet group type coming from the file schema.
    * @param field Sub field given as Delta Kernel's {@link StructField}
-   * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
+   * @return {@link Type} of the Parquet field. Returns {@code null}, if not found or if {@code
+   *     field} is void.
    */
   static Type findSubFieldType(
       GroupType groupType, StructField field, Map<Integer, Type> parquetFieldIdToTypeMap) {
+    // Void columns are read as all nulls even if a file has a column with the same name or ID.
+    if (field.getDataType() instanceof VoidType) {
+      return null;
+    }
 
     // First search by the field id. If not found, search by case-sensitive name. Finally
     // by the case-insensitive name.

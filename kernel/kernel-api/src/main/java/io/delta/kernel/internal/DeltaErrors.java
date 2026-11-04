@@ -246,6 +246,21 @@ public final class DeltaErrors {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
 
+  public static KernelException voidTypeBlocksDataWrites(String schemaShape) {
+    return new KernelException(
+        format(
+            "Cannot write data files to a table whose schema has %s, because void values aren't "
+                + "stored in data files. Change the void fields to other types first.",
+            schemaShape));
+  }
+
+  public static KernelException voidTypeBlocksTransformLogicalData() {
+    return new KernelException(
+        "Cannot transform logical data for a table with void fields, because Kernel's Parquet "
+            + "writer can't write void fields. Write the data files with a Parquet writer that "
+            + "omits them instead.");
+  }
+
   public static KernelException unsupportedStatsDataType(DataType dataType) {
     return new KernelException("Kernel doesn't support writing stats data of type: " + dataType);
   }
@@ -353,6 +368,32 @@ public final class DeltaErrors {
         format(
             "%s does not support the data type '%s' for a partition column.",
             compatVersion, dataType));
+  }
+
+  public static KernelException icebergCompatVoidFieldNotNullable(
+      String compatVersion, String fieldPath) {
+    return new KernelException(
+        format(
+            "%s requires void fields to be nullable, but '%s' can't be null. Make it nullable, "
+                + "or change it to another type.",
+            compatVersion, fieldPath));
+  }
+
+  public static KernelException icebergCompatVoidMapKey(String compatVersion, String fieldPath) {
+    return new KernelException(
+        format(
+            "%s doesn't support void map keys, because map keys can't be null. Change '%s' to "
+                + "another type.",
+            compatVersion, fieldPath));
+  }
+
+  public static KernelException icebergCompatVoidFieldWithDefault(
+      String compatVersion, String fieldPath) {
+    return new KernelException(
+        format(
+            "%s doesn't support default values on void fields, but '%s' has one. Remove the "
+                + "default value, or change the field to another type.",
+            compatVersion, fieldPath));
   }
 
   public static KernelException icebergCompatRequiresLiteralDefaultValue(
@@ -472,11 +513,6 @@ public final class DeltaErrors {
 
   public static KernelException protocolChangedException(long attemptVersion) {
     return new ProtocolChangedException(attemptVersion);
-  }
-
-  public static KernelException voidTypeEncountered() {
-    return new KernelException(
-        "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
   }
 
   public static KernelException cannotModifyTableProperty(String key) {

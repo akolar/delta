@@ -31,7 +31,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType, VoidType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -2097,5 +2097,103 @@ class SchemaUtilsSuite extends AnyFunSuite {
       dummyProtocol,
       emptySet(),
       false)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Void type
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("validateSchema accepts void at any level") {
+    validateSchema(new StructType()
+      .add("v", VoidType.VOID)
+      .add("s", new StructType().add("v", VoidType.VOID))
+      .add("a", new ArrayType(VoidType.VOID, true))
+      .add("m", new MapType(INTEGER, VoidType.VOID, true)))
+  }
+
+  test("validatePartitionColumns rejects a void partition column") {
+    expectFailure("partition column (v) of type: void") {
+      SchemaUtils.validatePartitionColumns(
+        new StructType().add("id", INTEGER).add("v", VoidType.VOID),
+        Seq("v").asJava)
+    }
+  }
+
+  private val voidColumnSchema =
+    new StructType().add("v", VoidType.VOID, true, fieldMetadata(id = 1, physicalName = "v"))
+
+  Seq(
+    "integer" -> new StructType().add("v", INTEGER, true, fieldMetadata(1, "v")),
+    "string" -> new StructType().add("v", StringType.STRING, true, fieldMetadata(1, "v")),
+    "struct" -> new StructType().add(
+      "v",
+      new StructType().add("x", INTEGER, true, fieldMetadata(2, "x")),
+      true,
+      fieldMetadata(1, "v")),
+    "array" -> new StructType()
+      .add("v", new ArrayType(INTEGER, true), true, fieldMetadata(1, "v")))
+    .foreach { case (targetType, schemaAfter) =>
+      Seq(true, false).foreach { typeWideningEnabled =>
+        Seq(true, false).foreach { icebergWriterCompatV1Enabled =>
+          test(s"validateUpdatedSchema allows changing void to $targetType, " +
+            s"typeWidening=$typeWideningEnabled, " +
+            s"icebergWriterCompatV1=$icebergWriterCompatV1Enabled") {
+            val tblProperties = Map(
+              ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id",
+              TableConfig.TYPE_WIDENING_ENABLED.getKey -> typeWideningEnabled.toString,
+              TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey ->
+                icebergWriterCompatV1Enabled.toString)
+
+            val updatedSchema = validateUpdatedSchemaAndGetUpdatedSchema(
+              metadata(voidColumnSchema, tblProperties),
+              metadata(schemaAfter, tblProperties),
+              dummyProtocol,
+              emptySet(),
+              false /* allowNewRequiredFields */
+            )
+            // An updated schema is only returned to record type changes.
+            assert(!updatedSchema.isPresent)
+          }
+        }
+      }
+    }
+
+  test("validateUpdatedSchema allows changing a void array element and map value") {
+    val before = new StructType()
+      .add("a", new ArrayType(VoidType.VOID, true), true, fieldMetadata(1, "a"))
+      .add("m", new MapType(INTEGER, VoidType.VOID, true), true, fieldMetadata(2, "m"))
+    val after = new StructType()
+      .add("a", new ArrayType(LONG, true), true, fieldMetadata(1, "a"))
+      .add("m", new MapType(INTEGER, StringType.STRING, true), true, fieldMetadata(2, "m"))
+
+    val updatedSchema = validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(before),
+      metadata(after),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */
+    )
+    assert(!updatedSchema.isPresent)
+  }
+
+  test("validateUpdatedSchema still blocks changing a column to void") {
+    expectFailure("Cannot change the type of existing field v from integer to void") {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(new StructType().add("v", INTEGER, true, fieldMetadata(1, "v"))),
+        metadata(voidColumnSchema),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */
+      )
+    }
+  }
+
+  test("Compute schema changes doesn't record a type change for a void column") {
+    val schemaChanges = computeSchemaChangesById(
+      voidColumnSchema,
+      new StructType().add("v", INTEGER, true, fieldMetadata(1, "v")))
+
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(!schemaChanges.updatedSchema().isPresent)
   }
 }

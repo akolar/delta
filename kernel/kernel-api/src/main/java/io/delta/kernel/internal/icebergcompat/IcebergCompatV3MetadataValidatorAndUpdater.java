@@ -19,11 +19,16 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.util.SchemaIterable;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.VoidType;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
 import java.util.Map;
@@ -123,9 +128,43 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
             CHECK_HAS_SUPPORTED_TYPE_WIDENING,
+            CHECK_VOID_FIELDS_ARE_NULLABLE_WITHOUT_DEFAULTS,
             CHECK_LITERAL_DEFAULT_VALUE)
         .collect(toList());
   }
+
+  /**
+   * Void maps to Iceberg's {@code unknown} type, which the Iceberg spec requires to be optional, so
+   * void fields must be nullable. Only the nullability of the field that holds the void counts, not
+   * that of its parents. Void map keys are always rejected, because map keys can't be null. Any
+   * default value on a void field is rejected, even {@code NULL}: the spec only allows a null
+   * default for {@code unknown}, and a void field without a default is already null.
+   */
+  protected static IcebergCompatCheck CHECK_VOID_FIELDS_ARE_NULLABLE_WITHOUT_DEFAULTS =
+      (inputContext) -> {
+        for (SchemaIterable.SchemaElement element :
+            new SchemaIterable(inputContext.newMetadata.getSchema())) {
+          StructField field = element.getField();
+          if (!(field.getDataType() instanceof VoidType)) {
+            continue;
+          }
+          // Checked before nullability, since a map key built from a StructField can be nullable.
+          boolean isMapKey =
+              !element.isStructField() && field.getName().equals(MapType.MAP_KEY_NAME);
+          if (isMapKey) {
+            throw DeltaErrors.icebergCompatVoidMapKey(
+                inputContext.compatFeatureName, element.getNamePath());
+          }
+          if (!field.isNullable()) {
+            throw DeltaErrors.icebergCompatVoidFieldNotNullable(
+                inputContext.compatFeatureName, element.getNamePath());
+          }
+          if (ColumnDefaults.getRawDefaultValue(field) != null) {
+            throw DeltaErrors.icebergCompatVoidFieldWithDefault(
+                inputContext.compatFeatureName, element.getNamePath());
+          }
+        }
+      };
 
   protected static IcebergCompatCheck CHECK_LITERAL_DEFAULT_VALUE =
       (inputContext) ->

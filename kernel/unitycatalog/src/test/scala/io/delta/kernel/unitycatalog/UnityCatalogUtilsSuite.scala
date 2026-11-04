@@ -28,7 +28,7 @@ import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.test.MockSnapshotUtils
 import io.delta.kernel.transaction.DataLayoutSpec
-import io.delta.kernel.types.{IntegerType, StringType, StructType}
+import io.delta.kernel.types.{IntegerType, StringType, StructType, VoidType}
 import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -401,5 +401,12 @@ class UnityCatalogUtilsSuite
       assert(node.has("type") && node.has("nullable") && node.has("metadata"))
       assert(node.get("nullable").asBoolean === d.isNullable)
     }
+  }
+
+  test("toColumnDefs: void maps to the UC NULL type") {
+    val defs = UnityCatalogUtils.toColumnDefs(new StructType().add("v", VoidType.VOID)).asScala
+
+    assert(defs.map(_.getTypeName) === Seq("NULL"))
+    assert(defs.map(_.getTypeText) === Seq("void"))
   }
 }

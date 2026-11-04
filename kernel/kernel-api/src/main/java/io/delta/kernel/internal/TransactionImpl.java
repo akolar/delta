@@ -550,6 +550,9 @@ public class TransactionImpl implements Transaction {
       // This is wrapped in an AtomicBoolean to allow modification from within the lambda
       final AtomicBoolean hasAddWithDataChange = new AtomicBoolean(false);
       final AtomicBoolean hasRemoveWithDataChange = new AtomicBoolean(false);
+      // The schema is the same for every add, so it's checked once, on the first add that can be
+      // a new data file. Commits without such an add, like metadata-only changes, aren't blocked.
+      final AtomicBoolean schemaCheckedForDataWrites = new AtomicBoolean(false);
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -573,6 +576,14 @@ public class TransactionImpl implements Transaction {
                     }
                     if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                       AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                      // An add with a deletion vector can re-add an existing file, which writes
+                      // no new data file. Kernel can't tell that from a new file that comes with
+                      // a deletion vector, so the commit skips the check for both.
+                      if (!addFile.getDeletionVector().isPresent()
+                          && !schemaCheckedForDataWrites.get()) {
+                        SchemaUtils.validateSchemaAllowsDataWrites(metadata.getSchema());
+                        schemaCheckedForDataWrites.set(true);
+                      }
                       if (isCdfEnabled && addFile.getDataChange()) {
                         hasAddWithDataChange.set(true);
                         if (hasRemoveWithDataChange.get()) {

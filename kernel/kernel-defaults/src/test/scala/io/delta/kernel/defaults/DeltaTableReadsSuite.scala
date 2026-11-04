@@ -31,7 +31,7 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.types.{LongType, StructType, VoidType}
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -973,19 +973,14 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
-  test("table with void type - schema parsing is lazy") {
+  test("table with void type - void columns read as nulls") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
-      // Snapshot loading should succeed since schema parsing is now lazy
-      val snapshot = latestSnapshot(path)
-      assert(snapshot.getVersion >= 0)
-      // Accessing the schema should still throw KernelException due to VOID type
-      val e = intercept[KernelException] {
-        snapshot.getSchema
-      }
-      assert(e.getMessage.contains(
-        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+      spark.sql(s"INSERT INTO delta.`${tempDir.getAbsolutePath}` VALUES (1, NULL), (2, NULL)")
+
+      assert(latestSnapshot(path).getSchema.get("y").getDataType === VoidType.VOID)
+      checkTable(path, expectedAnswer = Seq(TestRow(1, null), TestRow(2, null)))
     }
   }
 

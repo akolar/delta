@@ -23,7 +23,9 @@ import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEn
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.SchemaUtils.blockIfVoidDataTypeIsDefined;
 import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
+import static io.delta.kernel.internal.util.SchemaUtils.validateSchemaAllowsDataWrites;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.annotation.Experimental;
@@ -195,6 +197,7 @@ public interface Transaction {
         protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
     blockIfColumnMappingEnabled(transactionState);
     blockIfVariantDataTypeIsDefined(tableSchema);
+    blockIfVoidDataTypeIsDefined(tableSchema);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
     ColumnDefaults.blockWriteIfEnabled(transactionState);
@@ -285,6 +288,8 @@ public interface Transaction {
    * @return {@link DataWriteContext} containing metadata about where and how the data for partition
    *     should be written. The target directory and the returned partition-value keys use the
    *     physical partition column names.
+   * @throws io.delta.kernel.exceptions.KernelException if void types in the table schema block
+   *     writing data files under the protocol, such as a void inside an array or a map
    */
   static DataWriteContext getWriteContext(
       Engine engine,
@@ -296,6 +301,9 @@ public interface Transaction {
     // only need the target directory and partition metadata from this method. The column
     // mapping block remains in transformLogicalData() for Kernel's own Parquet path.
     StructType tableSchema = getLogicalSchema(transactionState);
+    // Fails before the connector writes any files. The commit checks the schema again, on its
+    // first add without a deletion vector.
+    validateSchemaAllowsDataWrites(tableSchema);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
     ColumnMapping.ColumnMappingMode mode = getColumnMappingMode(transactionState);

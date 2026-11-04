@@ -36,7 +36,7 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
   override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES
 
   override def unsupportedDataColumnTypes: Set[DataType] =
-    Set(VariantType.VARIANT, GeometryType.ofDefault(), GeographyType.ofDefault())
+    Set(VariantType.VARIANT, GeometryType.ofDefault(), GeographyType.ofDefault(), VoidType.VOID)
 
   override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
 

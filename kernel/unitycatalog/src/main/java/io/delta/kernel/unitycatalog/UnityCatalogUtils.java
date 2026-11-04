@@ -336,6 +336,7 @@ public class UnityCatalogUtils {
     if (type instanceof StringType) return "STRING";
     if (type instanceof BinaryType) return "BINARY";
     if (type instanceof VariantType) return "VARIANT";
+    if (type instanceof VoidType) return "NULL";
     if (type instanceof DecimalType) return "DECIMAL";
     if (type instanceof ArrayType) return "ARRAY";
     if (type instanceof MapType) return "MAP";

@@ -196,6 +196,74 @@ public class SchemaUtils {
   }
 
   /**
+   * Validates that new data files can be written to a table with the given schema. Void values are
+   * never stored in data files, so the protocol blocks data writes while the schema has a void
+   * inside an array or a map, a struct whose fields are all void, or only void columns. Changing
+   * those void fields to other types makes the table writable again.
+   *
+   * @param schema the table schema
+   * @throws KernelException if the schema blocks data writes
+   */
+  public static void validateSchemaAllowsDataWrites(StructType schema) {
+    if (hasOnlyVoidFields(schema)) {
+      throw voidTypeBlocksDataWrites("only void columns");
+    }
+    for (StructField field : schema.fields()) {
+      validateTypeAllowsDataWrites(
+          field.getDataType(), field.getName(), /* isInsideArrayOrMap = */ false);
+    }
+  }
+
+  private static void validateTypeAllowsDataWrites(
+      DataType dataType, String path, boolean isInsideArrayOrMap) {
+    if (dataType instanceof VoidType && isInsideArrayOrMap) {
+      throw voidTypeBlocksDataWrites(format("a void inside an array or a map at '%s'", path));
+    } else if (dataType instanceof StructType) {
+      StructType structType = (StructType) dataType;
+      if (hasOnlyVoidFields(structType)) {
+        throw voidTypeBlocksDataWrites(format("a struct whose fields are all void at '%s'", path));
+      }
+      for (StructField field : structType.fields()) {
+        validateTypeAllowsDataWrites(
+            field.getDataType(), path + "." + field.getName(), isInsideArrayOrMap);
+      }
+    } else if (dataType instanceof ArrayType) {
+      validateTypeAllowsDataWrites(
+          ((ArrayType) dataType).getElementType(),
+          path + "." + ArrayType.ARRAY_ELEMENT_NAME,
+          /* isInsideArrayOrMap = */ true);
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      validateTypeAllowsDataWrites(
+          mapType.getKeyType(), path + "." + MapType.MAP_KEY_NAME, /* isInsideArrayOrMap = */ true);
+      validateTypeAllowsDataWrites(
+          mapType.getValueType(),
+          path + "." + MapType.MAP_VALUE_NAME,
+          /* isInsideArrayOrMap = */ true);
+    }
+  }
+
+  private static boolean hasOnlyVoidFields(StructType structType) {
+    // An empty struct has no void fields. Counting it as all void would block writes to tables
+    // that have no void at all.
+    return structType.length() > 0
+        && structType.fields().stream().allMatch(field -> field.getDataType() instanceof VoidType);
+  }
+
+  /**
+   * Blocks transforming logical data when the schema has a void field, because Kernel's Parquet
+   * writer can't write void fields.
+   */
+  public static void blockIfVoidDataTypeIsDefined(StructType tableSchema) {
+    boolean voidFieldExists =
+        new SchemaIterable(tableSchema)
+            .stream().anyMatch(field -> field.getField().getDataType() instanceof VoidType);
+    if (voidFieldExists) {
+      throw voidTypeBlocksTransformLogicalData();
+    }
+  }
+
+  /**
    * Verify the partition columns exists in the table schema and a supported data type for a
    * partition column.
    *
@@ -480,8 +548,10 @@ public class SchemaUtils {
       }
 
       if (!existingField.equals(newField)) {
+        // Changing a void column isn't type widening, so it isn't recorded as a type change.
         if (!existingField.getDataType().isNested()
             && !newField.getDataType().isNested()
+            && !(existingField.getDataType() instanceof VoidType)
             && !existingField.getDataType().equivalent(newField.getDataType())) {
           // Type changes only apply to non-nested types.  This loop evaluates both
           // nested and non-nested, so we narrow down updates here. Actual type differences
@@ -721,6 +791,11 @@ public class SchemaUtils {
       DataType existingType = existingField.getDataType();
       DataType newType = newField.getDataType();
       if (!existingType.equivalent(newType)) {
+        // Data files hold no values for a void column, so it can change to any type without the
+        // type widening feature.
+        if (existingType instanceof VoidType) {
+          return;
+        }
 
         if (typeWideningEnabled) {
           if ((icebergWriterCompatV1Enabled
@@ -867,7 +942,8 @@ public class SchemaUtils {
         || dataType instanceof TimestampNTZType
         || dataType instanceof VariantType
         || dataType instanceof GeometryType
-        || dataType instanceof GeographyType) {
+        || dataType instanceof GeographyType
+        || dataType instanceof VoidType) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {
